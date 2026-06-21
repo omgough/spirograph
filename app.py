@@ -27,7 +27,7 @@ app = Flask(__name__)
 #   R = radius of the big (fixed) circle
 #   r = radius of the small (rolling) circle  -> controls how many petals
 #   d = how far the pen is from the small circle's center -> loop shape
-def make_spirograph_image(x, y, rx, ry):
+def make_spirograph_image(x, y, rx, ry, color="#e0567a"):
     # The canvas in the browser is 400x400, with the circle centered at
     # (200, 200) and a radius of 180. We measure where the dot's center
     # is relative to that center.
@@ -71,7 +71,7 @@ def make_spirograph_image(x, y, rx, ry):
 
     # ---- Draw it with Matplotlib ----
     fig, ax = plt.subplots(figsize=(5, 5))
-    ax.plot(xs, ys, color="#e0567a", linewidth=1.2)
+    ax.plot(xs, ys, color=color, linewidth=1.2)
     ax.set_aspect("equal")     # keep true proportions (no accidental squashing)
     ax.axis("off")             # hide the axes/numbers
     # Fit the view to the pattern with a little margin.
@@ -103,9 +103,10 @@ def point():
     y = data["y"]
     rx = data["rx"]            # dot's horizontal radius
     ry = data["ry"]            # dot's vertical radius
-    print(f"Got a dot: x={x}, y={y}, rx={rx}, ry={ry}")
+    color = data.get("color", "#e0567a")   # line colour (from the palette)
+    print(f"Got a dot: x={x}, y={y}, rx={rx}, ry={ry}, color={color}")
 
-    image = make_spirograph_image(x, y, rx, ry)   # do the math + draw it
+    image = make_spirograph_image(x, y, rx, ry, color)   # do the math + draw it
     return jsonify({"image": image})              # send the picture back
 
 

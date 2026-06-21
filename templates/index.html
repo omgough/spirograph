@@ -21,80 +21,146 @@
       color: #666;
       font-size: 14px;
     }
+    /* The palette picker */
+    #palettes {
+      display: flex;
+      justify-content: center;
+      gap: 12px;
+      margin: 16px 0;
+      flex-wrap: wrap;
+    }
+    .palette {
+      border: 2px solid transparent;
+      border-radius: 10px;
+      padding: 8px 10px;
+      cursor: pointer;
+      background: white;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08);
+    }
+    .palette.selected {
+      border-color: #333;          /* highlight the chosen one */
+    }
+    .palette .name {
+      font-size: 13px;
+      margin-bottom: 6px;
+      color: #444;
+    }
+    .swatches {
+      display: flex;
+      gap: 3px;
+    }
+    .swatch {
+      width: 18px;
+      height: 18px;
+      border-radius: 3px;
+    }
   </style>
 </head>
 <body>
   <h1>Spirograph</h1>
-  <p>Press inside the circle and drag to draw a dot. Drag wider for a bigger,
-     loopier pattern; drag mostly sideways or up-and-down to stretch it.</p>
+
+  <!-- The palette picker is filled in by JavaScript (see below). -->
+  <div id="palettes"></div>
+
+  <p>Press inside the circle and drag to draw a dot. Each one uses the next
+     colour in your chosen palette.</p>
 
   <canvas id="board" width="400" height="400"></canvas>
   <div id="info">No dot yet.</div>
 
-  <!-- Python's spirograph picture will appear here. -->
   <div>
     <img id="result" width="400" alt="Your spirograph will appear here">
   </div>
 
   <script>
-    // ---- Grab the canvas and its "drawing context" ----
+    // ---- The colour palettes (read from your reference images) ----
+    const PALETTES = {
+      "Garden": ["#41478f", "#6b76c4", "#1faa7d", "#2f8f6a", "#c89b3c", "#8f9b40", "#b4502f"],
+      "Mosaic": ["#4e9e5b", "#d23b5c", "#ec9bb1", "#e0875a", "#5b7fce", "#1f8f9c", "#8d7cc2"],
+      "Waves":  ["#2f5fae", "#2f8b57", "#c0392b"]
+    };
+
+    let currentPalette = "Garden";   // which palette is selected
+    let colorIndex = 0;              // which colour to use next
+
+    // ---- Build the palette picker buttons ----
+    const palettesDiv = document.getElementById("palettes");
+    for (const name in PALETTES) {
+      const colors = PALETTES[name];
+
+      const card = document.createElement("div");
+      card.className = "palette" + (name === currentPalette ? " selected" : "");
+
+      const label = document.createElement("div");
+      label.className = "name";
+      label.textContent = name;
+      card.appendChild(label);
+
+      const row = document.createElement("div");
+      row.className = "swatches";
+      colors.forEach(c => {
+        const sw = document.createElement("div");
+        sw.className = "swatch";
+        sw.style.background = c;
+        row.appendChild(sw);
+      });
+      card.appendChild(row);
+
+      // Clicking a palette selects it.
+      card.addEventListener("click", () => selectPalette(name, card));
+      palettesDiv.appendChild(card);
+    }
+
+    function selectPalette(name, card) {
+      currentPalette = name;
+      colorIndex = 0;   // start from the first colour again
+      // Update which card looks selected.
+      document.querySelectorAll(".palette").forEach(p => p.classList.remove("selected"));
+      card.classList.add("selected");
+    }
+
+    // ---- Canvas drawing (same as before) ----
     const canvas = document.getElementById("board");
     const ctx = canvas.getContext("2d");
     const info = document.getElementById("info");
 
-    // The boundary circle.
     const center = { x: 200, y: 200 };
     const radius = 180;
 
-    // The dot now has a position AND a size/shape:
-    //   x, y   = its center
-    //   rx, ry = its horizontal and vertical radius
-    let dot = null;
-    let dragging = false;   // are we currently drawing the dot?
+    let dot = null;          // { x, y, rx, ry }
+    let dragging = false;
 
-    // ---- Helpers ----
-    // Convert a mouse event into canvas coordinates.
     function getPos(event) {
       const rect = canvas.getBoundingClientRect();
       return { x: event.clientX - rect.left, y: event.clientY - rect.top };
     }
 
-    // Is a point inside the boundary circle?
     function insideCircle(x, y) {
       const dx = x - center.x;
       const dy = y - center.y;
       return Math.sqrt(dx * dx + dy * dy) <= radius;
     }
 
-    // ---- Draw everything from scratch ----
     function draw() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-      // The boundary circle.
       ctx.beginPath();
       ctx.arc(center.x, center.y, radius, 0, 2 * Math.PI);
       ctx.strokeStyle = "#888";
       ctx.lineWidth = 2;
       ctx.stroke();
 
-      // The dot (an oval), if there is one.
       if (dot) {
         ctx.beginPath();
-        ctx.ellipse(
-          dot.x, dot.y,
-          Math.max(dot.rx, 2), Math.max(dot.ry, 2),  // never draw it at size 0
-          0, 0, 2 * Math.PI
-        );
-        ctx.fillStyle = "rgba(224, 86, 122, 0.35)";  // semi-transparent fill
+        ctx.ellipse(dot.x, dot.y, Math.max(dot.rx, 2), Math.max(dot.ry, 2), 0, 0, 2 * Math.PI);
+        ctx.fillStyle = "rgba(120, 120, 120, 0.3)";
         ctx.fill();
-        ctx.strokeStyle = "#e0567a";
+        ctx.strokeStyle = "#555";
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
     }
 
-    // ---- Drawing the dot with a press + drag ----
-    // 1) Press: set the dot's center.
     canvas.addEventListener("mousedown", function (event) {
       const p = getPos(event);
       if (!insideCircle(p.x, p.y)) {
@@ -106,22 +172,18 @@
       draw();
     });
 
-    // 2) Drag: grow the oval. Horizontal drag -> width, vertical -> height.
     canvas.addEventListener("mousemove", function (event) {
       if (!dragging) return;
       const p = getPos(event);
       dot.rx = Math.abs(p.x - dot.x);
       dot.ry = Math.abs(p.y - dot.y);
-      info.textContent =
-        "Dot size: " + Math.round(dot.rx) + " x " + Math.round(dot.ry);
+      info.textContent = "Dot size: " + Math.round(dot.rx) + " x " + Math.round(dot.ry);
       draw();
     });
 
-    // 3) Release: finish the dot and send it to Python.
     canvas.addEventListener("mouseup", function () {
       if (!dragging) return;
       dragging = false;
-      // If it was basically just a click, give it a small default size.
       if (dot.rx < 3 && dot.ry < 3) {
         dot.rx = 8;
         dot.ry = 8;
@@ -130,12 +192,17 @@
       sendDotToPython();
     });
 
-    // ---- Send the dot to our Python backend ----
+    // ---- Send the dot + the chosen colour to Python ----
     function sendDotToPython() {
+      // Pick the next colour from the current palette, then advance.
+      const colors = PALETTES[currentPalette];
+      const color = colors[colorIndex % colors.length];
+      colorIndex = colorIndex + 1;
+
       fetch("/point", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ x: dot.x, y: dot.y, rx: dot.rx, ry: dot.ry })
+        body: JSON.stringify({ x: dot.x, y: dot.y, rx: dot.rx, ry: dot.ry, color: color })
       })
         .then(response => response.json())
         .then(reply => {
@@ -143,7 +210,6 @@
         });
     }
 
-    // Draw the empty circle once when the page loads.
     draw();
   </script>
 </body>
