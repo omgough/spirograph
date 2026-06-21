@@ -7,98 +7,93 @@
     body {
       font-family: sans-serif;
       text-align: center;
-      background: #faf8f5;
-      color: #333;
+      background: #f7e9d5;
+      color: #463939;
     }
     canvas {
-      border: 1px solid #ccc;
+      border: 1px solid #463939;
       border-radius: 8px;
-      background: white;
-      cursor: crosshair;
+      background: rgb(208, 204, 191);
     }
-    #info {
-      margin-top: 10px;
-      color: #666;
-      font-size: 14px;
-    }
-    /* The palette picker */
-    #palettes {
+    #board { cursor: crosshair; }
+    .stage {
       display: flex;
       justify-content: center;
-      gap: 12px;
-      margin: 16px 0;
+      gap: 24px;
       flex-wrap: wrap;
+      align-items: flex-start;
+    }
+    .stage figcaption {
+      font-size: 13px;
+      color: #888;
+      margin-top: 6px;
+    }
+    #info { margin-top: 10px; color: #666; font-size: 14px; }
+    #palettes {
+      display: flex; justify-content: center; gap: 12px;
+      margin: 16px 0; flex-wrap: wrap;
     }
     .palette {
-      border: 2px solid transparent;
-      border-radius: 10px;
-      padding: 8px 10px;
-      cursor: pointer;
-      background: white;
+      border: 2px solid transparent; border-radius: 10px;
+      padding: 8px 10px; cursor: pointer; background: white;
       box-shadow: 0 1px 3px rgba(0,0,0,0.08);
     }
-    .palette.selected {
-      border-color: #333;          /* highlight the chosen one */
-    }
-    .palette .name {
-      font-size: 13px;
-      margin-bottom: 6px;
-      color: #444;
-    }
-    .swatches {
-      display: flex;
-      gap: 3px;
-    }
-    .swatch {
-      width: 18px;
-      height: 18px;
-      border-radius: 3px;
-    }
+    .palette.selected { border-color: #333; }
+    .palette .name { font-size: 13px; margin-bottom: 6px; color: #444; }
+    .swatches { display: flex; gap: 3px; }
+    .swatch { width: 18px; height: 18px; border-radius: 3px; }
   </style>
 </head>
 <body>
   <h1>Spirograph</h1>
 
-  <!-- The palette picker is filled in by JavaScript (see below). -->
   <div id="palettes"></div>
 
-  <p>Press inside the circle and drag to draw a dot. Each one adds a new
-     spirograph layer in the next colour of your palette.</p>
+  <p>Press inside the circle and drag to draw a dot. Releasing adds a new
+     spirograph layer, traced in the next colour of your palette.</p>
 
-  <canvas id="board" width="400" height="400"></canvas>
+  <!-- Two canvases now: one to draw the dot, one for the artwork. -->
+  <div class="stage">
+    <figure>
+      <canvas id="board" width="400" height="400"></canvas>
+      <figcaption>Draw here</figcaption>
+    </figure>
+    <figure>
+      <canvas id="art" width="400" height="400"></canvas>
+      <figcaption>Your artwork</figcaption>
+    </figure>
+    <figure>
+      <canvas id="zoom" width="200" height="200"></canvas>
+      <figcaption>Zoom (hover the artwork)</figcaption>
+    </figure>
+  </div>
+
   <div id="info">No layers yet.</div>
   <div style="margin-top: 10px;">
     <button id="clearBtn">Clear all layers</button>
   </div>
 
-  <div>
-    <img id="result" width="400" alt="Your spirograph will appear here">
-  </div>
-
   <script>
-    // ---- The colour palettes (read from your reference images) ----
+    // ============================================================
+    //  PALETTES
+    // ============================================================
     const PALETTES = {
       "Garden": ["#41478f", "#6b76c4", "#1faa7d", "#2f8f6a", "#c89b3c", "#8f9b40", "#b4502f"],
       "Mosaic": ["#4e9e5b", "#d23b5c", "#ec9bb1", "#e0875a", "#5b7fce", "#1f8f9c", "#8d7cc2"],
       "Waves":  ["#2f5fae", "#2f8b57", "#c0392b"]
     };
+    let currentPalette = "Garden";
+    let colorIndex = 0;
 
-    let currentPalette = "Garden";   // which palette is selected
-    let colorIndex = 0;              // which colour to use next
-
-    // ---- Build the palette picker buttons ----
     const palettesDiv = document.getElementById("palettes");
     for (const name in PALETTES) {
       const colors = PALETTES[name];
-
       const card = document.createElement("div");
       card.className = "palette" + (name === currentPalette ? " selected" : "");
-
       const label = document.createElement("div");
       label.className = "name";
       label.textContent = name;
       card.appendChild(label);
-
       const row = document.createElement("div");
       row.className = "swatches";
       colors.forEach(c => {
@@ -108,52 +103,186 @@
         row.appendChild(sw);
       });
       card.appendChild(row);
-
-      // Clicking a palette selects it.
       card.addEventListener("click", () => selectPalette(name, card));
       palettesDiv.appendChild(card);
     }
-
     function selectPalette(name, card) {
       currentPalette = name;
-      colorIndex = 0;   // start from the first colour again
-      // Update which card looks selected.
+      colorIndex = 0;
       document.querySelectorAll(".palette").forEach(p => p.classList.remove("selected"));
       card.classList.add("selected");
     }
 
-    // ---- Canvas drawing (same as before) ----
+    // ============================================================
+    //  THE SPIROGRAPH MATHS  (ported from our Python)
+    // ============================================================
+    // Greatest common divisor — needed to know when the curve closes.
+    function gcd(a, b) { return b ? gcd(b, a % b) : a; }
+
+    // Given a dot (position + size + shape), return the list of points
+    // [ [x,y], [x,y], ... ] that make up the spirograph curve.
+    function spirographPoints(x, y, rx, ry) {
+      const cx = 200, cy = 200;          // the draw-circle's centre
+      const dx = x - cx, dy = y - cy;
+      const distance = Math.hypot(dx, dy);
+      const frac = Math.min(distance / 180, 1);
+
+      const R = 180;
+      let r = Math.round(90 - frac * 60);   // petals: from position
+      if (r < 1) r = 1;
+
+      let size = (rx + ry) / 2;             // loopiness: from size
+      size = Math.max(3, Math.min(size, 150));
+      const d = 15 + (size / 150) * 115;
+
+      rx = Math.max(rx, 1);                  // stretch: from shape
+      ry = Math.max(ry, 1);
+      const aspect = rx / ry;
+      const xScale = Math.sqrt(aspect);
+      const yScale = 1 / xScale;
+
+      const turns = r / gcd(R, r);
+      const N = 2000;                        // points along the curve
+      const tMax = 2 * Math.PI * turns;
+      const pts = [];
+      for (let i = 0; i <= N; i++) {
+        const t = tMax * i / N;
+        const px = ((R - r) * Math.cos(t) + d * Math.cos((R - r) / r * t)) * xScale;
+        const py = ((R - r) * Math.sin(t) - d * Math.sin((R - r) / r * t)) * yScale;
+        pts.push([px, py]);
+      }
+      return pts;
+    }
+
+    // ============================================================
+    //  THE ARTWORK CANVAS  (where layers are drawn + animated)
+    // ============================================================
+    const SCALE = 0.6;     // shrink curve coords to fit the 400px canvas
+    let ALPHA = 0.6;       // line transparency (the slider will control this later)
+
+    const artCanvas = document.getElementById("art");
+    const artCtx = artCanvas.getContext("2d");
+
+    // An off-screen canvas that holds all the FINISHED layers. We keep it
+    // so we don't have to redraw every layer on every animation frame.
+    const buffer = document.createElement("canvas");
+    buffer.width = 400; buffer.height = 400;
+    const bufferCtx = buffer.getContext("2d");
+
+    let layers = [];   // each: { x, y, rx, ry, color, pts }
+
+    // Draw one layer's path onto a context, up to a fraction (0..1) of the way.
+    function drawLayerPath(c, layer, frac) {
+      const pts = layer.pts;
+      const n = Math.max(2, Math.floor(pts.length * frac));
+      c.save();
+      c.globalAlpha = ALPHA;
+      c.strokeStyle = layer.color;
+      c.lineWidth = 1.3;
+      c.beginPath();
+      for (let i = 0; i < n; i++) {
+        const X = 200 + pts[i][0] * SCALE;
+        const Y = 200 - pts[i][1] * SCALE;   // minus: maths y-up vs canvas y-down
+        if (i === 0) c.moveTo(X, Y);
+        else c.lineTo(X, Y);
+      }
+      c.stroke();
+      c.restore();
+    }
+
+    // Show the buffer (all finished layers) on the visible canvas.
+    function showBuffer() {
+      artCtx.clearRect(0, 0, 400, 400);
+      artCtx.drawImage(buffer, 0, 0);
+    }
+
+    // Animate a single layer being traced on, then bake it into the buffer.
+    function animateLayer(layer) {
+      const start = performance.now();
+      const duration = 1200;   // milliseconds to draw one layer
+      function frame(now) {
+        const frac = Math.min((now - start) / duration, 1);
+        showBuffer();                       // finished layers underneath
+        drawLayerPath(artCtx, layer, frac); // the one being drawn
+        if (frac < 1) {
+          requestAnimationFrame(frame);
+        } else {
+          drawLayerPath(bufferCtx, layer, 1);  // bake it in for good
+        }
+      }
+      requestAnimationFrame(frame);
+    }
+
+    // ============================================================
+    //  THE ZOOM WINDOW  (magnifies wherever you hover the artwork)
+    // ============================================================
+    const ZOOM = 4;                          // magnification factor
+    const zoomCanvas = document.getElementById("zoom");
+    const zoomCtx = zoomCanvas.getContext("2d");
+    const REGION = zoomCanvas.width / ZOOM;   // size of the area we sample (50px)
+
+    // Map a mouse event to coordinates on the 400x400 art canvas,
+    // even if the canvas is displayed at a different size.
+    function getArtPos(e) {
+      const rect = artCanvas.getBoundingClientRect();
+      return {
+        x: (e.clientX - rect.left) * (artCanvas.width / rect.width),
+        y: (e.clientY - rect.top) * (artCanvas.height / rect.height)
+      };
+    }
+
+    artCanvas.addEventListener("mousemove", function (e) {
+      const p = getArtPos(e);
+      // Top-left of the region we sample, kept inside the canvas.
+      let sx = Math.max(0, Math.min(p.x - REGION / 2, 400 - REGION));
+      let sy = Math.max(0, Math.min(p.y - REGION / 2, 400 - REGION));
+
+      // Copy that small region from the buffer, blown up to fill the zoom.
+      zoomCtx.clearRect(0, 0, zoomCanvas.width, zoomCanvas.height);
+      zoomCtx.drawImage(buffer, sx, sy, REGION, REGION,
+                        0, 0, zoomCanvas.width, zoomCanvas.height);
+
+      // Show a little box on the artwork marking what we're zooming into.
+      showBuffer();
+      artCtx.save();
+      artCtx.strokeStyle = "rgba(70, 57, 57, 0.7)";
+      artCtx.lineWidth = 1;
+      artCtx.strokeRect(sx, sy, REGION, REGION);
+      artCtx.restore();
+    });
+
+    // When the mouse leaves, remove the box.
+    artCanvas.addEventListener("mouseleave", function () {
+      showBuffer();
+    });
+
+    // ============================================================
+    //  THE DRAW-CIRCLE CANVAS  (where you draw the dot)
+    // ============================================================
     const canvas = document.getElementById("board");
     const ctx = canvas.getContext("2d");
     const info = document.getElementById("info");
-
     const center = { x: 200, y: 200 };
     const radius = 180;
 
-    let dot = null;          // the dot currently being drawn { x, y, rx, ry }
+    let dot = null;
     let dragging = false;
-    let layers = [];         // ALL the spirographs so far { x, y, rx, ry, color }
 
     function getPos(event) {
       const rect = canvas.getBoundingClientRect();
       return { x: event.clientX - rect.left, y: event.clientY - rect.top };
     }
-
     function insideCircle(x, y) {
-      const dx = x - center.x;
-      const dy = y - center.y;
+      const dx = x - center.x, dy = y - center.y;
       return Math.sqrt(dx * dx + dy * dy) <= radius;
     }
-
-    function draw() {
+    function drawBoard() {
       ctx.clearRect(0, 0, canvas.width, canvas.height);
-
       ctx.beginPath();
       ctx.arc(center.x, center.y, radius, 0, 2 * Math.PI);
       ctx.strokeStyle = "#888";
       ctx.lineWidth = 2;
       ctx.stroke();
-
       if (dot) {
         ctx.beginPath();
         ctx.ellipse(dot.x, dot.y, Math.max(dot.rx, 2), Math.max(dot.ry, 2), 0, 0, 2 * Math.PI);
@@ -167,71 +296,52 @@
 
     canvas.addEventListener("mousedown", function (event) {
       const p = getPos(event);
-      if (!insideCircle(p.x, p.y)) {
-        info.textContent = "Please press inside the circle.";
-        return;
-      }
+      if (!insideCircle(p.x, p.y)) { info.textContent = "Please press inside the circle."; return; }
       dragging = true;
       dot = { x: p.x, y: p.y, rx: 0, ry: 0 };
-      draw();
+      drawBoard();
     });
-
     canvas.addEventListener("mousemove", function (event) {
       if (!dragging) return;
       const p = getPos(event);
       dot.rx = Math.abs(p.x - dot.x);
       dot.ry = Math.abs(p.y - dot.y);
       info.textContent = "Dot size: " + Math.round(dot.rx) + " x " + Math.round(dot.ry);
-      draw();
+      drawBoard();
     });
-
     canvas.addEventListener("mouseup", function () {
       if (!dragging) return;
       dragging = false;
-      if (dot.rx < 3 && dot.ry < 3) {
-        dot.rx = 8;
-        dot.ry = 8;
-      }
-      draw();
+      if (dot.rx < 3 && dot.ry < 3) { dot.rx = 8; dot.ry = 8; }
+      drawBoard();
       addLayer();
     });
 
-    // ---- Add the drawn dot as a new layer, then re-render everything ----
+    // Add the drawn dot as a new layer and animate it on.
     function addLayer() {
-      // Pick the next colour from the current palette, then advance.
       const colors = PALETTES[currentPalette];
       const color = colors[colorIndex % colors.length];
       colorIndex = colorIndex + 1;
-
-      layers.push({ x: dot.x, y: dot.y, rx: dot.rx, ry: dot.ry, color: color });
+      const layer = {
+        x: dot.x, y: dot.y, rx: dot.rx, ry: dot.ry, color: color,
+        pts: spirographPoints(dot.x, dot.y, dot.rx, dot.ry)
+      };
+      layers.push(layer);
       info.textContent = layers.length + " layer(s)";
-      renderLayers();
+      animateLayer(layer);
     }
 
-    // ---- Send the WHOLE list of layers to Python to draw together ----
-    function renderLayers() {
-      fetch("/render", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ layers: layers })
-      })
-        .then(response => response.json())
-        .then(reply => {
-          document.getElementById("result").src = reply.image;
-        });
-    }
-
-    // ---- Clear button: throw away all layers and start fresh ----
     document.getElementById("clearBtn").addEventListener("click", function () {
       layers = [];
       colorIndex = 0;
       dot = null;
       info.textContent = "No layers yet.";
-      document.getElementById("result").removeAttribute("src");
-      draw();
+      bufferCtx.clearRect(0, 0, 400, 400);
+      showBuffer();
+      drawBoard();
     });
 
-    draw();
+    drawBoard();
   </script>
 </body>
 </html>
