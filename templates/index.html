@@ -62,11 +62,14 @@
   <!-- The palette picker is filled in by JavaScript (see below). -->
   <div id="palettes"></div>
 
-  <p>Press inside the circle and drag to draw a dot. Each one uses the next
-     colour in your chosen palette.</p>
+  <p>Press inside the circle and drag to draw a dot. Each one adds a new
+     spirograph layer in the next colour of your palette.</p>
 
   <canvas id="board" width="400" height="400"></canvas>
-  <div id="info">No dot yet.</div>
+  <div id="info">No layers yet.</div>
+  <div style="margin-top: 10px;">
+    <button id="clearBtn">Clear all layers</button>
+  </div>
 
   <div>
     <img id="result" width="400" alt="Your spirograph will appear here">
@@ -127,8 +130,9 @@
     const center = { x: 200, y: 200 };
     const radius = 180;
 
-    let dot = null;          // { x, y, rx, ry }
+    let dot = null;          // the dot currently being drawn { x, y, rx, ry }
     let dragging = false;
+    let layers = [];         // ALL the spirographs so far { x, y, rx, ry, color }
 
     function getPos(event) {
       const rect = canvas.getBoundingClientRect();
@@ -189,26 +193,43 @@
         dot.ry = 8;
       }
       draw();
-      sendDotToPython();
+      addLayer();
     });
 
-    // ---- Send the dot + the chosen colour to Python ----
-    function sendDotToPython() {
+    // ---- Add the drawn dot as a new layer, then re-render everything ----
+    function addLayer() {
       // Pick the next colour from the current palette, then advance.
       const colors = PALETTES[currentPalette];
       const color = colors[colorIndex % colors.length];
       colorIndex = colorIndex + 1;
 
-      fetch("/point", {
+      layers.push({ x: dot.x, y: dot.y, rx: dot.rx, ry: dot.ry, color: color });
+      info.textContent = layers.length + " layer(s)";
+      renderLayers();
+    }
+
+    // ---- Send the WHOLE list of layers to Python to draw together ----
+    function renderLayers() {
+      fetch("/render", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ x: dot.x, y: dot.y, rx: dot.rx, ry: dot.ry, color: color })
+        body: JSON.stringify({ layers: layers })
       })
         .then(response => response.json())
         .then(reply => {
           document.getElementById("result").src = reply.image;
         });
     }
+
+    // ---- Clear button: throw away all layers and start fresh ----
+    document.getElementById("clearBtn").addEventListener("click", function () {
+      layers = [];
+      colorIndex = 0;
+      dot = null;
+      info.textContent = "No layers yet.";
+      document.getElementById("result").removeAttribute("src");
+      draw();
+    });
 
     draw();
   </script>

@@ -1,7 +1,7 @@
 # app.py — our web app
 #
 # Flask serves pages to the browser. NumPy does fast math.
-# Matplotlib draws the spirograph into an image.
+# Matplotlib draws the spirographs into an image.
 
 import io          # lets us hold an image in memory (no file needed)
 import base64      # lets us turn an image into text to send to the browser
@@ -21,40 +21,31 @@ app = Flask(__name__)
 
 
 # ---- The spirograph math ----
-# A spirograph curve is called a "hypotrochoid". It traces the path of a
-# pen poked through a small circle that rolls around inside a big circle.
-# It has three settings:
-#   R = radius of the big (fixed) circle
-#   r = radius of the small (rolling) circle  -> controls how many petals
-#   d = how far the pen is from the small circle's center -> loop shape
-def make_spirograph_image(x, y, rx, ry, color="#e0567a"):
-    # The canvas in the browser is 400x400, with the circle centered at
-    # (200, 200) and a radius of 180. We measure where the dot's center
-    # is relative to that center.
-    #   x, y   = where the dot is placed
-    #   rx, ry = the dot's horizontal and vertical radius (its size + shape)
-    cx, cy = 200, 200
+# Given one dot (position + size + shape), work out the curve's points.
+# A spirograph curve is a "hypotrochoid": the path of a pen poked through a
+# small circle that rolls around inside a big circle. Three settings:
+#   R = big fixed circle, r = small rolling circle (-> petal count),
+#   d = pen offset from the rolling circle's centre (-> loopiness).
+def spirograph_points(x, y, rx, ry):
+    cx, cy = 200, 200          # the canvas circle's centre, in browser pixels
     dx = x - cx
     dy = y - cy
-    distance = (dx * dx + dy * dy) ** 0.5      # 0 (center) .. 180 (edge)
-    frac = min(distance / 180.0, 1.0)          # same thing as 0.0 .. 1.0
+    distance = (dx * dx + dy * dy) ** 0.5      # 0 (centre) .. 180 (edge)
+    frac = min(distance / 180.0, 1.0)
 
     R = 180
 
-    # KNOB 1 — petals: position from center sets the rolling circle size.
-    # Closer to the edge -> smaller rolling circle -> MORE petals.
-    r = int(round(90 - frac * 60))             # ranges from 90 down to 30
+    # Petals: position from centre sets the rolling circle size.
+    r = int(round(90 - frac * 60))             # 90 down to 30
     if r < 1:
         r = 1
 
-    # KNOB 2 — loopiness: the dot's overall SIZE sets the pen offset d.
-    # Bigger dot -> bigger d -> loopier, more dramatic pattern.
+    # Loopiness: the dot's overall SIZE sets the pen offset d.
     size = (rx + ry) / 2.0
-    size = max(3.0, min(size, 150.0))          # keep it in a sane range
-    d = 15 + (size / 150.0) * 115              # ranges from ~15 to ~130
+    size = max(3.0, min(size, 150.0))
+    d = 15 + (size / 150.0) * 115              # ~15 to ~130
 
-    # KNOB 3 — stretch: the dot's SHAPE stretches the whole pattern.
-    # A wide dot -> wide pattern; a tall dot -> tall pattern.
+    # Stretch: the dot's SHAPE stretches the whole pattern.
     rx = max(rx, 1.0)
     ry = max(ry, 1.0)
     aspect = rx / ry
@@ -63,29 +54,42 @@ def make_spirograph_image(x, y, rx, ry, color="#e0567a"):
 
     # How many full turns until the pattern closes back on itself.
     turns = r // gcd(R, r)
-    t = np.linspace(0, 2 * np.pi * turns, 4000)   # 4000 points along the path
+    t = np.linspace(0, 2 * np.pi * turns, 4000)
 
-    # The hypotrochoid formulas — this is the actual spirograph!
     xs = ((R - r) * np.cos(t) + d * np.cos((R - r) / r * t)) * x_scale
     ys = ((R - r) * np.sin(t) - d * np.sin((R - r) / r * t)) * y_scale
+    return xs, ys
 
-    # ---- Draw it with Matplotlib ----
+
+# ---- Draw a whole stack of spirographs onto one image ----
+def render_layers(layers):
     fig, ax = plt.subplots(figsize=(5, 5))
-    ax.plot(xs, ys, color=color, linewidth=1.2)
-    ax.set_aspect("equal")     # keep true proportions (no accidental squashing)
-    ax.axis("off")             # hide the axes/numbers
-    # Fit the view to the pattern with a little margin.
-    m = max(np.abs(xs).max(), np.abs(ys).max()) * 1.05
+
+    max_extent = 1.0
+    for layer in layers:
+        xs, ys = spirograph_points(
+            layer["x"], layer["y"], layer["rx"], layer["ry"]
+        )
+        color = layer.get("color", "#e0567a")
+        # alpha < 1 makes the line semi-transparent, so layers underneath
+        # show through and overlaps blend into richer colours.
+        ax.plot(xs, ys, color=color, linewidth=1.2, alpha=0.6)
+
+        # Track how far out the biggest layer reaches, so we can frame it.
+        extent = max(np.abs(xs).max(), np.abs(ys).max())
+        if extent > max_extent:
+            max_extent = extent
+
+    m = max_extent * 1.05
+    ax.set_aspect("equal")
+    ax.axis("off")
     ax.set_xlim(-m, m)
     ax.set_ylim(-m, m)
 
-    # Save the drawing into memory as a PNG (instead of a file on disk).
     buffer = io.BytesIO()
     fig.savefig(buffer, format="png", bbox_inches="tight", dpi=100)
-    plt.close(fig)             # free the memory
+    plt.close(fig)
     buffer.seek(0)
-
-    # Turn the image bytes into a text string the browser can show.
     encoded = base64.b64encode(buffer.read()).decode("utf-8")
     return "data:image/png;base64," + encoded
 
@@ -95,19 +99,14 @@ def home():
     return render_template("index.html")
 
 
-# The browser sends a dot here; we send a spirograph picture back.
-@app.route("/point", methods=["POST"])
-def point():
+# The browser sends the FULL list of layers; we draw them all and reply.
+@app.route("/render", methods=["POST"])
+def render():
     data = request.get_json()
-    x = data["x"]
-    y = data["y"]
-    rx = data["rx"]            # dot's horizontal radius
-    ry = data["ry"]            # dot's vertical radius
-    color = data.get("color", "#e0567a")   # line colour (from the palette)
-    print(f"Got a dot: x={x}, y={y}, rx={rx}, ry={ry}, color={color}")
-
-    image = make_spirograph_image(x, y, rx, ry, color)   # do the math + draw it
-    return jsonify({"image": image})              # send the picture back
+    layers = data["layers"]
+    print(f"Rendering {len(layers)} layer(s)")
+    image = render_layers(layers)
+    return jsonify({"image": image})
 
 
 if __name__ == "__main__":
